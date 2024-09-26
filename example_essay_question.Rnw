@@ -1,0 +1,158 @@
+% !Rnw weave = Sweave
+
+\documentclass{article}
+
+\setlength{\tabcolsep}{9pt}
+
+\begin{document}
+
+
+<<echo=FALSE, results=hide>>=
+# Initialise symbolic variables x and k for use in rSymPy package
+Var("x")
+Var("k")
+
+# Create a 'serial number' for referencing this unique version of the question
+versionno <- sample(1e5:(1e6-1), 1)
+
+# This allows us to cycle deterministically through different cases of the question
+#  rather than randomising. In this case, the Case variable determines whether the 
+#  function is discrete or continuous
+if(!exists("cases2") || NROW(cases2) < 1) {
+  cases2 <- 1:2
+}
+Case <- cases2[1]
+cases2 <- cases2[-1]
+
+# To make the question more pleasant for students, we want to ensure that the 
+# denominator of the constant k is not too large. We use a while loop for this
+toolargedenom <- TRUE
+
+while (toolargedenom) {
+
+  if (Case == 1) { # Discrete    
+    # supportmin is the smallest value in the support of the random variable, 
+    #  an integer between 1 and 5
+    supportmin <- sample(5, 1)
+    # supportmax is the largest value in the support of the random variable, 
+    #  which differs from supportmin by between 2 and 4 
+    supportmax <- sample((supportmin + 2):(supportmin + 4), 1)
+    # The support thus consists of the integers from supportmin to supportmax, inclusive
+    support <- supportmin:supportmax
+    # Express the support set in LaTeX notation
+    supportlatex <- str_c("x = ", str_c(support, collapse = ", ")) 
+
+  } else if (Case == 2) { # Continuous 
+    # Randomise lower and upper bounds of support interval    
+    supportmin <- sample(0:3, 1)
+    supportmax <- sample((supportmin + 2):10, 1)
+    support <- c(supportmin, supportmax)
+    
+    supportlatex <- str_c(supportmin, "\\\\le x \\\\le ", supportmax)
+  }
+
+  # f(x) will be a monomial function of degree exponent, an integer between 1 and 4
+  exponent <- sample(4, 1)
+  f <- function(x) x ^ exponent
+  # Calculate the constant k (the answer), numerically
+  # Use summation in discrete case, otherwise integration
+  k <- if_else(Case == 1, 1 / sum(map_dbl(support, f)),
+               1 / integrate(f = f, lower = support[1], upper = support[2])$value)
+      
+  # Determine the denominator of k when expressed as a fraction
+  kfrac <- fractions(k, max.denominator = 1e6)
+  denom <- kfrac %>% 
+    as.character %>% 
+    str_sub(start = str_locate(., "/")[1, 1], end = str_length(.))
+  # If the denominator is two digits or less, we can accept it. Otherwise loop.
+  if (str_length(denom) <= 2) toolargedenom <- FALSE  
+}
+
+# Express the constant k in LaTeX
+klatex <- frac2latex(kfrac)
+
+# Express f(x) without k in SymPy syntax
+fsympy_nok <- deparse(body(f)) %>% 
+  str_replace(pattern = "exponent", replacement = as.character(exponent)) %>% 
+  str_replace(pattern = "\\^", replacement = "\\*\\*")
+
+# Express f(x), now with the constant k included, in SymPy syntax
+# (this should work for quite general f)
+fsympy <- str_c(num2rational(k), " * (", deparse(body(f)), ")") %>% 
+  str_replace(pattern = "exponent", replacement = as.character(exponent)) %>% 
+  str_replace(pattern = "\\^", replacement = "\\*\\*")
+
+# Express f(x) without k in LaTeX
+flatex_nok <- sympynlatex(fsympy_nok)
+
+# Express f(x) with symbol k in LaTeX for inclusion in the question
+
+flatex_question <- str_c("k * (", fsympy_nok, ")") %>% 
+  sympynlatex
+
+# Express f(x) with k in LaTeX
+flatex <- sympynlatex(fsympy)
+
+if (Case == 1) { # Discrete
+  # Compute the sum of the function (without k) over its support
+  fsum_nok <- str_c("Sum(", fsympy_nok, ", (x, ", supportmin, ", ", supportmax, ")).doit()") %>% 
+    sympynlatex
+    
+  solution <- str_c("\\\\begin{eqnarray*} k\\\\displaystyle\\\\sum_{x=", 
+    supportmin, "}^{", supportmax, "} f_X(x) &= 1 \\\\\\\\ k\\\\left[",
+    str_c(str_c("f_X(", support, ")"), collapse = " + "), 
+    "\\\\right] &= 1 \\\\\\\\ k \\\\left[", str_c(str_replace_all(flatex_nok, "x", 
+    str_c("(", support, ")")), collapse = " + "), " \\\\right] &= 1 \\\\\\\\ 
+    k\\\\left(", 
+    fsum_nok, "\\\\right)&= 1 \\\\\\\\ k = ", klatex, 
+    "&= ", signif(k, 4), "\\\\end{eqnarray*}")
+  
+} else if (Case == 2) { # Continuous
+
+  fantider_nok <- str_c("integrate(", fsympy_nok, ", x)") %>% 
+    sympynlatex
+  
+  fantider <- str_c("integrate(", fsympy, ", x)") %>% 
+    sympynlatex
+  
+  fintegral_nok <- str_c("integrate(", fsympy_nok, ", (x, ", supportmin, ", ", supportmax, "))") %>% 
+    sympynlatex
+  
+  solution <- str_c("\\\\begin{eqnarray*} k\\\\displaystyle\\\\int_{", 
+    supportmin, "}^{", supportmax, "} f_X(x) \\\\mathrm{d}x &= 1 \\\\\\\\ k\\\\displaystyle\\\\int_{", 
+    supportmin, "}^{", supportmax, "}", flatex_nok, "\\\\mathrm{d}x &= 1 \\\\\\\\
+    k\\\\left[", fantider_nok, "\\\\right]_{", supportmin, "}^{", supportmax, "} &= 1\\\\\\\\ k\\\\left(", fintegral_nok, "\\\\right)&= 1 \\\\\\\\ k= ", klatex, "&= ", signif(k, 4), "\\\\end{eqnarray*}")
+}
+@
+
+ \begin{question}
+ The random variable $X$ has the following probability \Sexpr{ifelse(Case == 1, "mass", "density")} function:
+ 
+ \begin{eqnarray*}
+ f_X(x)&=\begin{cases} \Sexpr{flatex_question} \text{ for } \Sexpr{supportlatex} \\
+ 0 \text{ otherwise}
+ \end{cases}\end{eqnarray*}
+
+Find the value of $k$. Scan your handwritten answer and insert as an image file in your answer. Your name and student number must be handwritten on the page. Answer must be expressed as a fraction or as a decimal correct to four significant digits.
+
+\emph{Note to marker: question version \Sexpr{versionno}.}
+ \end{question}
+ 
+  \begin{solution}
+    \Sexpr{solution}
+  \end{solution}
+
+%% META-INFORMATION
+%% \extype{string}
+%% \exstringtype{essay}
+%% \exsolution{nil}
+%% \exname{\Sexpr{str_c("Find_k_essay_", Sys.Date())}}
+%% \exextra[essay,logical]{TRUE}
+%% \exextra[essay_format,character]{editor}
+%% \exextra[essay_required,logical]{FALSE}
+%% \exextra[essay_fieldlines,numeric]{5}
+%% \exextra[essay_attachments,numeric]{1}
+%% \exextra[essay_attachmentsrequired,logical]{TRUE}
+%% \exmaxchars{1000, 10, 50}
+%% \expoints{8}
+\end{document}
